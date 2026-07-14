@@ -191,15 +191,23 @@ function matriculaCandidates(text) {
   const candidates = new Set();
   const value = stripHtml(text);
   const labeled = value.matchAll(/(?:matr[ií]cula|mat\.?|cadastro|registro)\D{0,12}(\d[\d.\-\/]{0,14}\d)/gi);
+  const prefixed = value.matchAll(/(?:^|[\s(;])M[-.\s]*(\d{1,8})(?=$|[\s);-])/gi);
 
   for (const match of labeled) {
     const digits = onlyDigits(match[1]);
     if (digits.length >= 1 && digits.length <= 10) candidates.add(digits);
   }
 
+  for (const match of prefixed) {
+    const digits = onlyDigits(match[1]);
+    if (digits.length >= 1 && digits.length <= 8) candidates.add(digits);
+  }
+
   if (!candidates.size) {
-    const plainNumbers = value.match(/\b\d{1,8}\b/g) || [];
-    for (const item of plainNumbers.slice(0, 6)) candidates.add(onlyDigits(item));
+    const compact = value.trim();
+    if (/^\d{1,8}$/.test(compact)) {
+      candidates.add(onlyDigits(compact));
+    }
   }
 
   return [...candidates];

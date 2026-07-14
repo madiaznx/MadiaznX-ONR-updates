@@ -185,11 +185,13 @@ async function imageBuffersForOcr(file) {
 function extractFields(text, fallbackMatricula) {
   const normalizedText = String(text || '').replace(/\s+/g, ' ');
   const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const matricula = onlyDigits(firstMatch(normalizedText, /matr[ií]cula\D{0,16}(\d[\d.\-\/]{0,14}\d)/i)) || fallbackMatricula;
-  const cpfCnpj = [...normalizedText.matchAll(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b|\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/g)]
+  const currentOwner = extractCurrentOwner(normalizedText, lines);
+  const matricula = fallbackMatricula || onlyDigits(firstMatch(normalizedText, /matr[ií]cula\D{0,16}(\d[\d.\-\/]{0,14}\d)/i));
+  const allCpfCnpj = [...normalizedText.matchAll(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b|\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/g)]
     .map((match) => match[0])
     .filter(uniqueFilter)
     .join(', ');
+  const cpfCnpj = currentOwner.cpfCnpj || allCpfCnpj;
   const cep = firstMatch(normalizedText, /\b(\d{5}-?\d{3})\b/);
   const car = firstMatch(normalizedText, /\b([A-Z]{2}-\d{7}-[A-Z0-9]{32,})\b/i);
   const ccir = firstMatch(normalizedText, /(?:CCIR|SNCR)\D{0,12}([\d.\-]{8,})/i);
@@ -203,8 +205,8 @@ function extractFields(text, fallbackMatricula) {
     || firstMatch(normalizedText, /\b(\d{2}\/\d{2}\/\d{4})\b/);
   const livro = firstMatch(normalizedText, /livro\D{0,8}([A-Z0-9.\-]+)/i);
   const folha = firstMatch(normalizedText, /folha\D{0,8}([A-Z0-9.\-]+)/i);
-  const ownerLine = firstLine(lines, /(propriet[aá]rio|adquirente|outorgado|comprador|fiduciante)/i);
-  const addressLine = firstLine(lines, /(endere[cç]o|situado|localizado|rua|avenida|rodovia|estrada|travessa)/i);
+  const ownerLine = currentOwner.name || firstLine(lines, /(adquirente|outorgado|comprador|propriet[aá]rio|fiduciante)/i);
+  const addressLine = findPropertyAddressLine(lines);
   const areaM2 = firstMatch(normalizedText, /(?:area|[aá]rea)\D{0,18}([\d.]+,\d{2})\s*m/i);
   const areaHa = firstMatch(normalizedText, /(?:area|[aá]rea)\D{0,18}([\d.]+,\d{2,4})\s*ha/i);
 
@@ -215,7 +217,7 @@ function extractFields(text, fallbackMatricula) {
     folhaMatricula: folha,
     nomeProprietario: cleanLabeledLine(ownerLine),
     cpfCnpj,
-    endereco: cleanLabeledLine(addressLine),
+    endereco: cleanAddressLine(addressLine),
     cep,
     ccirSncr: ccir,
     snci,
@@ -228,8 +230,41 @@ function extractFields(text, fallbackMatricula) {
     areaM2,
     areaHa,
     isClosed: /matr[ií]cula\s+encerrada|encerrad[ao]\s+a\s+matr[ií]cula|im[oó]vel\s+encerrado/i.test(normalizedText),
-    hasTransferHints: /transfer[eê]ncia|alien[aç][aã]o|compra\s+e\s+venda|vendido|adquirente|transmitente|outorgante/i.test(normalizedText)
+    hasTransferHints: /transfer[eê]ncia|alien[aç][aã]o|compra\s+e\s+venda|venda\s+e\s+compra|vendido|adquirente|transmitente|transmitiram|outorgante/i.test(normalizedText)
   };
+}
+
+function extractCurrentOwner(text, lines) {
+  const patterns = [
+    /transmitiram\s+o\s+im[oó]vel(?:\s+objeto\s+desta\s+matr[ií]cula)?\s+a\s+(.+?)(?:,\s*RG|\s*,\s*CPF|\s*,\s*brasileir[ao]|\s*,\s*pelo\s+valor| pelo\s+valor)/i,
+    /transmitiu\s+o\s+im[oó]vel(?:\s+objeto\s+desta\s+matr[ií]cula)?\s+a\s+(.+?)(?:,\s*RG|\s*,\s*CPF|\s*,\s*brasileir[ao]|\s*,\s*pelo\s+valor| pelo\s+valor)/i,
+    /adquirente[s]?\s*[:\-]?\s*(.+?)(?:,\s*RG|\s*,\s*CPF|\s*,\s*brasileir[ao]|$)/i,
+    /comprador(?:es)?\s*[:\-]?\s*(.+?)(?:,\s*RG|\s*,\s*CPF|\s*,\s*brasileir[ao]|$)/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const name = cleanPersonName(match[1]);
+    const context = text.slice(match.index, match.index + 700);
+    return {
+      name,
+      cpfCnpj: firstMatch(context, /\b(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})\b/)
+    };
+  }
+
+  const ownerLine = firstLine(lines, /(adquirente|comprador)/i);
+  return {
+    name: ownerLine ? cleanPersonName(cleanLabeledLine(ownerLine)) : '',
+    cpfCnpj: ''
+  };
+}
+
+function findPropertyAddressLine(lines) {
+  return lines.find((line) => {
+    return /(im[oó]vel|terreno|pr[eé]dio|apartamento|lote)/i.test(line)
+      && /(endere[cç]o|situad[ao]|localizad[ao]|rua|avenida|rodovia|estrada|travessa)/i.test(line);
+  }) || firstLine(lines, /(endere[cç]o|situad[ao]|localizad[ao])/i);
 }
 
 function normalizeMatricula(value) {
@@ -286,6 +321,21 @@ function cleanLabeledLine(line) {
   return String(line || '')
     .replace(/^(propriet[aá]rio(?:s)?|adquirente(?:s)?|outorgado(?:s)?|comprador(?:es)?|endere[cç]o|situado|localizado)\s*[:\-]?\s*/i, '')
     .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function cleanAddressLine(line) {
+  const cleaned = cleanLabeledLine(line);
+  const propertyStart = cleaned.match(/\b(?:um|uma|o|a)\s+(?:im[oó]vel|terreno|pr[eé]dio|apartamento|lote)\b.*$/i);
+  if (propertyStart) return propertyStart[0].trim();
+  return cleaned.replace(/^[^A-Za-z0-9]+/g, '').trim();
+}
+
+function cleanPersonName(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .replace(/\b(RG|CPF|CPF\/MF|CNPJ|brasileir[ao]|maior|menor)\b.*$/i, '')
+    .replace(/[;,.]\s*$/g, '')
     .trim();
 }
 
