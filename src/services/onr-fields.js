@@ -122,7 +122,7 @@ const REQUIRED_FORM_FIELDS = [
 function createRecord({ matricula, ocrFields, polygon, settings }) {
   const fields = emptyRecord(settings);
   fields.matricula = ocrFields.matricula || matricula || '';
-  fields.cadastroRegistro = fields.matricula;
+  fields.cadastroRegistro = ocrFields.cadastroRegistro || '';
   fields.dataMatricula = ocrFields.dataMatricula || '';
   fields.livroMatricula = ocrFields.livroMatricula || '';
   fields.folhaMatricula = ocrFields.folhaMatricula || '';
@@ -141,6 +141,7 @@ function createRecord({ matricula, ocrFields, polygon, settings }) {
   fields.areaM2 = ocrFields.areaM2 || '';
   fields.areaHa = ocrFields.areaHa || '';
   fields.tipo = inferKind(ocrFields);
+  fields.numeroImovel = ocrFields.numeroImovel || '';
 
   if (polygon) {
     applyPolygon(fields, polygon);
