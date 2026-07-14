@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MadiaznX ONR</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div>
+          <div class="brand">MadiaznX ONR</div>
+          <div class="version" id="version">v0.1.0</div>
+        </div>
+
+        <nav class="nav">
+          <button class="nav-item active" type="button">Acervo</button>
+          <button class="nav-item" type="button">API ONR</button>
+          <button class="nav-item" type="button">Atualizacoes</button>
+        </nav>
+      </aside>
+
+      <main class="content">
+        <header class="topbar">
+          <div>
+            <h1>Preparacao para envio ONR</h1>
+            <p>Base inicial do aplicativo com canal de atualizacao via GitHub Releases.</p>
+          </div>
+          <button class="ghost-button" id="openLatestButton" type="button">Abrir latest</button>
+        </header>
+
+        <section class="work-grid">
+          <div class="panel wide">
+            <div class="panel-header">
+              <div>
+                <h2>Fluxo seguro</h2>
+                <p>O envio para a ONR e as atualizacoes exigem confirmacao humana.</p>
+              </div>
+            </div>
+
+            <div class="steps">
+              <div class="step done">
+                <span>1</span>
+                <div>
+                  <strong>Canal de update</strong>
+                  <p>Release GitHub em madiaznx/MadiaznX-ONR-updates.</p>
+                </div>
+              </div>
+              <div class="step">
+                <span>2</span>
+                <div>
+                  <strong>Leitura de acervo</strong>
+                  <p>Modulo OCR/KML sera ligado ao formulario ONR editavel.</p>
+                </div>
+              </div>
+              <div class="step">
+                <span>3</span>
+                <div>
+                  <strong>Envio pela API</strong>
+                  <p>Geracao de shapefile, upload por URL assinada e confirmacao manual.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Atualizacoes</h2>
+                <p id="packageState">Executando em modo local.</p>
+              </div>
+            </div>
+
+            <div class="status-box" id="updateStatus">Nenhuma checagem feita.</div>
+            <progress class="progress" id="updateProgress" max="100" value="0"></progress>
+
+            <div class="actions">
+              <button class="primary-button" id="checkButton" type="button">Verificar</button>
+              <button class="secondary-button" id="downloadButton" type="button" disabled>Baixar</button>
+              <button class="secondary-button" id="installButton" type="button" disabled>Instalar</button>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Artefatos</h2>
+                <p>Nomes publicados na release atual.</p>
+              </div>
+            </div>
+
+            <ul class="artifact-list">
+              <li><code>MadiaznX-ONR-Setup-v0.1.0.exe</code></li>
+              <li><code>MadiaznX-ONR-Setup.exe</code></li>
+              <li><code>latest.yml</code></li>
+            </ul>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>
