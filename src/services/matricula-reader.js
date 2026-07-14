@@ -173,13 +173,22 @@ async function imageBuffersForOcr(file) {
   const ifds = UTIF.decode(buffer);
   if (!ifds.length) return [];
 
-  return ifds.map((ifd) => {
-    UTIF.decodeImage(buffer, ifd);
-    const rgba = Buffer.from(UTIF.toRGBA8(ifd));
-    const png = new PNG({ width: ifd.width, height: ifd.height });
-    rgba.copy(png.data);
-    return PNG.sync.write(png);
-  });
+  const images = [];
+  for (const ifd of ifds) {
+    try {
+      UTIF.decodeImage(buffer, ifd);
+      const rgbaData = UTIF.toRGBA8(ifd);
+      if (!rgbaData || !ifd.width || !ifd.height) continue;
+      const rgba = Buffer.from(rgbaData);
+      const png = new PNG({ width: ifd.width, height: ifd.height });
+      rgba.copy(png.data);
+      images.push(PNG.sync.write(png));
+    } catch {
+      // Some legacy TIF pages have broken strips; keep reading the remaining pages.
+    }
+  }
+
+  return images;
 }
 
 function extractFields(text, fallbackMatricula) {
@@ -191,7 +200,10 @@ function extractFields(text, fallbackMatricula) {
     .map((match) => match[0])
     .filter(uniqueFilter)
     .join(', ');
-  const cpfCnpj = currentOwner.cpfCnpj || allCpfCnpj;
+  const nearbyOwnerCpfCnpj = findCpfCnpjNearOwner(normalizedText, currentOwner.name);
+  const legalEntityCnpj = isLikelyLegalEntityName(currentOwner.name)
+    ? firstMatch(normalizedText, /\b(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})\b/)
+    : '';
   const cep = firstMatch(normalizedText, /\b(\d{5}-?\d{3})\b/);
   const car = firstMatch(normalizedText, /\b([A-Z]{2}-\d{7}-[A-Z0-9]{32,})\b/i);
   const ccir = firstMatch(normalizedText, /(?:CCIR|SNCR)\D{0,12}([\d.\-]{8,})/i);
@@ -206,6 +218,14 @@ function extractFields(text, fallbackMatricula) {
   const livro = firstMatch(normalizedText, /livro\D{0,8}([A-Z0-9.\-]+)/i);
   const folha = firstMatch(normalizedText, /folha\D{0,8}([A-Z0-9.\-]+)/i);
   const ownerLine = currentOwner.name || firstLine(lines, /(adquirente|outorgado|comprador|propriet[aá]rio|fiduciante)/i);
+  const ownerName = cleanPersonName(cleanLabeledLine(ownerLine));
+  const ownerLooksLegal = isLikelyLegalEntityName(ownerName || currentOwner.name);
+  const currentOwnerDocument = !ownerLooksLegal && isCnpjDocument(currentOwner.cpfCnpj) ? '' : currentOwner.cpfCnpj;
+  const nearbyOwnerDocument = !ownerLooksLegal && isCnpjDocument(nearbyOwnerCpfCnpj) ? '' : nearbyOwnerCpfCnpj;
+  const displayCpfCnpj = currentOwnerDocument
+    || findCpfCnpjNearOwner(normalizedText, ownerName)
+    || nearbyOwnerDocument
+    || (ownerLooksLegal ? (legalEntityCnpj || allCpfCnpj) : '');
   const propertyAddress = extractPropertyAddress(normalizedText, lines);
   const cadastroRegistro = extractCadastroRegistro(normalizedText);
   const areaM2 = firstMatch(normalizedText, /(?:area|[aá]rea)\D{0,18}([\d.]+,\d{2})\s*m/i);
@@ -217,8 +237,8 @@ function extractFields(text, fallbackMatricula) {
     livroMatricula: livro,
     folhaMatricula: folha,
     cadastroRegistro,
-    nomeProprietario: cleanLabeledLine(ownerLine),
-    cpfCnpj,
+    nomeProprietario: isSuspectOwnerName(ownerName) ? '' : ownerName,
+    cpfCnpj: displayCpfCnpj,
     endereco: propertyAddress.endereco,
     numeroImovel: propertyAddress.numeroImovel,
     cep: propertyAddress.cep || cep,
@@ -238,6 +258,9 @@ function extractFields(text, fallbackMatricula) {
 }
 
 function extractCurrentOwner(text, lines) {
+  const latestOwner = extractLatestOwnerFromActs(text);
+  if (latestOwner.name) return latestOwner;
+
   const patterns = [
     /transmitiram\s+o\s+im[oó]vel(?:\s+objeto\s+desta\s+matr[ií]cula)?\s+a\s+(.+?)(?:,\s*RG|\s*,\s*CPF|\s*,\s*brasileir[ao]|\s*,\s*pelo\s+valor| pelo\s+valor)/i,
     /transmitiu\s+o\s+im[oó]vel(?:\s+objeto\s+desta\s+matr[ií]cula)?\s+a\s+(.+?)(?:,\s*RG|\s*,\s*CPF|\s*,\s*brasileir[ao]|\s*,\s*pelo\s+valor| pelo\s+valor)/i,
@@ -249,6 +272,7 @@ function extractCurrentOwner(text, lines) {
     const match = text.match(pattern);
     if (!match) continue;
     const name = cleanPersonName(match[1]);
+    if (isSuspectOwnerName(name)) continue;
     const context = text.slice(match.index, match.index + 700);
     return {
       name,
@@ -257,10 +281,83 @@ function extractCurrentOwner(text, lines) {
   }
 
   const ownerLine = firstLine(lines, /(adquirente|comprador)/i);
+  const fallbackOwner = ownerLine ? cleanPersonName(cleanLabeledLine(ownerLine)) : '';
   return {
-    name: ownerLine ? cleanPersonName(cleanLabeledLine(ownerLine)) : '',
+    name: isSuspectOwnerName(fallbackOwner) ? '' : fallbackOwner,
     cpfCnpj: ''
   };
+}
+
+function extractLatestOwnerFromActs(text) {
+  const value = String(text || '');
+  const fiduciaryOwner = extractFiduciaryFullOwner(value);
+  if (fiduciaryOwner.name) return fiduciaryOwner;
+
+  const candidates = [];
+  const patterns = [
+    /credor[ao]\s+fiduci[aá]ri[ao]\s+(.+?)(?:,\s*(?:j[aá]\s+qualificad[ao]|CNPJ|CPF|RG)|\s+passa\s+a\s+deter|\.)[^.]{0,260}?passa\s+a\s+deter\s+a\s+propriedade\s+plena/gi,
+    /passa\s+a\s+deter\s+a\s+propriedade\s+plena[^.]{0,260}?credor[ao]\s+fiduci[aá]ri[ao]\s+(.+?)(?:,\s*(?:j[aá]\s+qualificad[ao]|CNPJ|CPF|RG)|\.|;)/gi,
+    /(?:transmitiram|transmitiu|vendeu|venderam|doou|doaram|cedeu|cederam|alienou|alienaram)[^.]{0,420}?\s+a\s+(.+?)(?:,\s*(?:RG|CPF|CPF\/MF|CNPJ|brasileir[ao]|portador|inscrit[ao]|casad[ao]|solteir[ao])|\s+pelo\s+valor|\.|;)/gi,
+    /(?:adquirente[s]?|comprador(?:es)?|donat[aá]ri[ao]s?|cession[aá]ri[ao]s?)\s*[:\-]?\s*(.+?)(?:,\s*(?:RG|CPF|CPF\/MF|CNPJ|brasileir[ao]|portador|inscrit[ao]|casad[ao]|solteir[ao])|\.|;|$)/gi,
+    /(?:passa(?:m)?\s+a\s+pertencer|fica(?:m)?\s+pertencendo)\s+a\s+(.+?)(?:,\s*(?:RG|CPF|CPF\/MF|CNPJ|brasileir[ao]|portador|inscrit[ao]|casad[ao]|solteir[ao])|\.|;)/gi
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of value.matchAll(pattern)) {
+      const name = cleanPersonName(match[1]);
+      if (isSuspectOwnerName(name)) continue;
+      const context = value.slice(match.index, match.index + 900);
+      candidates.push({
+        name,
+        cpfCnpj: firstMatch(context, /\b(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})\b/),
+        index: match.index
+      });
+    }
+  }
+
+  candidates.sort((left, right) => left.index - right.index);
+  return candidates[0] || { name: '', cpfCnpj: '' };
+}
+
+function extractFiduciaryFullOwner(text) {
+  const value = String(text || '');
+  const match = value.match(/fica\s+consolidad[ao]\s+a\s+propriedade[^.]{0,260}?na\s+pessoa\s+d[ao]\s+credor[ao]\s+fiduci[aá]ri[ao]\s+(.+?)(?:,\s*j[aá]\s+qualificad[ao]|,\s*CNPJ|,\s*CPF|,\s*RG|\.|;)/i)
+    || value.match(/credor[ao]\s+fiduci[aá]ri[ao]\s+(.+?)(?:,\s*j[aá]\s+qualificad[ao]|,\s*CNPJ|,\s*CPF|,\s*RG)[^.]{0,420}?passa\s+a\s+deter\s+a\s+propriedade\s+plena/i);
+  if (!match) return { name: '', cpfCnpj: '' };
+
+  const name = cleanPersonName(match[1]);
+  if (isSuspectOwnerName(name)) return { name: '', cpfCnpj: '' };
+  const context = value.slice(match.index, match.index + 900);
+  return {
+    name,
+    cpfCnpj: firstMatch(context, /\b(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})\b/)
+  };
+}
+
+function isSuspectOwnerName(value) {
+  const text = String(value || '').trim();
+  if (!text || text.length < 4 || text.length > 150) return true;
+  return /(^[,.;:]|pelo instrumento|propriet[aá]ri[ao]s?|p[aá]ginas?|faleceu|e a seus sucessores|selo digital|artigo|dever[aá]|leil[oõ]es|certid[aã]o|matr[ií]cula de origem|todos aqueles indicados|foram pagos|recursos pr[oó]prios|saldo devedor|direitos decorrentes|do im[oó]vel|na propor[cç][aã]o|valor de R\$|residente|domiciliad|^e\s+R\$|R\$-\d|RG\s*n|CPF\/?MF?\s*n)/i.test(text);
+}
+
+function isLikelyLegalEntityName(value) {
+  return /\b(CAIXA|BANCO|COOPERATIVA|ASSOCIACAO|ASSOCIAÇÃO|EMPRESA|LTDA|S\.?A\.?|EIRELI|FEDERAL|MUNICIPIO|MUNICÍPIO|ESTADO)\b/i.test(String(value || ''));
+}
+
+function findCpfCnpjNearOwner(text, ownerName) {
+  const name = String(ownerName || '').trim();
+  if (!name || isSuspectOwnerName(name)) return '';
+
+  const index = String(text || '').indexOf(name);
+  if (index < 0) return '';
+  const context = String(text || '').slice(index, index + 650);
+  const cpf = firstMatch(context, /\b(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b/);
+  const cnpj = firstMatch(context, /\b(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})\b/);
+  return isLikelyLegalEntityName(name) ? (cnpj || cpf) : cpf;
+}
+
+function isCnpjDocument(value) {
+  return /^\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}$/.test(String(value || '').trim());
 }
 
 function extractPropertyAddress(text, lines) {
@@ -372,6 +469,8 @@ function extractStreetAddress(context) {
 
 function extractPropertyNumber(context) {
   if (hasPersonalResidenceTerm(context)) return '';
+  if (hasOwnerQualificationBeforeAddress(propertyContextSlice(context) || String(context || ''))) return '';
+  return extractPropertyNumberFallback(context);
 
   const fallback = extractPropertyNumberFallback(context);
   if (fallback) return fallback;
@@ -404,14 +503,32 @@ function splitAddressNumber(value) {
 }
 
 function cleanStreetAddress(value) {
-  return String(value || '')
+  return polishStreetAddress(String(value || '')
     .replace(/\s+/g, ' ')
     .replace(/,\s*(?:e\s+seu|e\s+respectivo|constitu[ií]do|constituido|correspondente|do\s+im[oó]vel|do\s+imovel|situado\s+no\s+bairro|bairro|medindo|confrontando|com\s+fundos).*$/i, '')
     .replace(/\s+\|.*$/g, '')
     .replace(/,\s*(?:Trememb(?:e|\u00e9)|SP|S(?:a|\u00e3)o\s+Paulo).*$/i, '')
     .replace(/^[^A-Za-z0-9]+/g, '')
     .replace(/,\s*$/g, '')
+    .trim());
+}
+
+function polishStreetAddress(value) {
+  let text = String(value || '').replace(/\s+/g, ' ').trim();
+  const streetStart = text.search(/\b(?:Rua|R\.|Avenida|Av\.|Rodovia|Estrada|Travessa|Alameda|Praca|Praça|Largo|Viela|Caminho|Passagem|Servidao|Servidão)\b/i);
+  if (streetStart > 0 && streetStart < 30) {
+    text = text.slice(streetStart).trim();
+  }
+
+  text = text
+    .replace(/,\s*(?:onde\s+mede|distante|distando|do\s+lado|lado\s+(?:direito|esquerdo|par|impar|ímpar)|do\s+loteamento|com\s+fundos|medindo|confrontando|respectivamente|situad[ao]\s+nesta\s+cidade|mais\s+\d|por\s+\d|esquina\s+com).*$/i, '')
+    .replace(/\s+(?:onde\s+mede|distante|distando|do\s+loteamento|contendo|com\s+\d{1,2}\s+dormit|area\s+constru|[aá]rea\s+constru|situad[ao](?:\s+nesta\s+cidade)?|mais\s+\d|por\s+\d|[\d.,]+m\s+a\s+(?:direita|esquerda)|com\s+igual\s+medida).*$/i, '')
+    .replace(/\s+-\s+com\s+fundos.*$/i, '')
+    .replace(/,\s*$/g, '')
     .trim();
+
+  if (/^(?:r\s+que|r\s+\d|r\s+registrada|r\s+requerimento|rua|rua\s+com\s+o\s+lote|servid[aã]o\s+de\s+passagem)$/i.test(text)) return '';
+  return text;
 }
 
 function collectPropertyAddressFallbackContexts(text, lines) {
@@ -462,6 +579,7 @@ function extractPropertyNumberFallback(context) {
 
   const normalizedNumber = extractPropertyNumberFromSearch(scoped);
   if (normalizedNumber) return normalizedNumber;
+  return '';
 
   const patterns = [
     /(?:recebeu|recebe|passou\s+a\s+ter)\s+(?:o\s+)?(?:n(?:u|\u00fa)mero(?:\s+predial)?|numero(?:\s+predial)?|n(?:[\u00ba\u00b0o?.]|\s+)|n\.?)\s*([A-Za-z0-9\-\/]+)/i,
@@ -495,6 +613,7 @@ function extractPropertyNumberFromSearch(context) {
     const match = search.match(pattern);
     if (!match) continue;
     const value = match[1].replace(/[.,;:]$/g, '');
+    if (!/\d/.test(value)) continue;
     if (/^(?:esta|este|desta|deste|no|na)$/i.test(value)) continue;
     return value.toUpperCase();
   }
@@ -696,8 +815,11 @@ function cleanLabeledLine(line) {
 
 function cleanPersonName(value) {
   return String(value || '')
+    .replace(/[|_=]+/g, ' ')
     .replace(/\s+/g, ' ')
-    .replace(/\b(RG|CPF|CPF\/MF|CNPJ|brasileir[ao]|maior|menor)\b.*$/i, '')
+    .replace(/^.*?\b(?:a|para)\s+(?=[A-ZÁÉÍÓÚÃÕÇ][A-ZÁÉÍÓÚÃÕÇ ]{3,})/u, '')
+    .replace(/^[,.;:\s]+/g, '')
+    .replace(/\b(RG|CPF|CPF\/MF|CNPJ|CNH|brasileir[ao]|maior|menor|casad[ao]|solteir[ao]|portador|inscrit[ao]|residente|domiciliad[ao])\b.*$/i, '')
     .replace(/[;,.]\s*$/g, '')
     .trim();
 }
