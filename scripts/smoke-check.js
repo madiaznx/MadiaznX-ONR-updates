@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const rootDir = path.resolve(__dirname, '..');
 const packageJson = require(path.join(rootDir, 'package.json'));
@@ -7,6 +8,11 @@ const packageJson = require(path.join(rootDir, 'package.json'));
 const requiredFiles = [
   'src/main.js',
   'src/preload.js',
+  'src/services/config-store.js',
+  'src/services/kml-service.js',
+  'src/services/matricula-reader.js',
+  'src/services/onr-api.js',
+  'src/services/onr-fields.js',
   'src/renderer/index.html',
   'src/renderer/renderer.js',
   'src/renderer/styles.css',
@@ -19,6 +25,17 @@ for (const file of requiredFiles) {
     throw new Error(`Arquivo obrigatorio ausente: ${file}`);
   }
 }
+
+requiredFiles
+  .filter((file) => file.endsWith('.js'))
+  .forEach((file) => {
+    const result = spawnSync(process.execPath, ['--check', path.join(rootDir, file)], {
+      encoding: 'utf8'
+    });
+    if (result.status !== 0) {
+      throw new Error(`Falha de sintaxe em ${file}:\n${result.stderr || result.stdout}`);
+    }
+  });
 
 if (packageJson.build.productName !== 'MadiaznX ONR') {
   throw new Error('build.productName deve ser MadiaznX ONR.');

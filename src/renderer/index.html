@@ -2,6 +2,10 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' data: https: file:; script-src 'self'; style-src 'self'; img-src 'self' data: https: file:;"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MadiaznX ONR</title>
     <link rel="stylesheet" href="./styles.css" />
@@ -9,66 +13,151 @@
   <body>
     <div class="app-shell">
       <aside class="sidebar">
-        <div>
-          <div class="brand">MadiaznX ONR</div>
-          <div class="version" id="version">v0.1.0</div>
+        <div class="brand-block">
+          <img class="brand-logo" src="../../assets/logo-madiaznx-onr.png" alt="" />
+          <div>
+            <div class="brand">MadiaznX ONR</div>
+            <div class="version" id="version">v0.1.0</div>
+          </div>
         </div>
 
         <nav class="nav">
-          <button class="nav-item active" type="button">Acervo</button>
-          <button class="nav-item" type="button">API ONR</button>
-          <button class="nav-item" type="button">Atualizacoes</button>
+          <button class="nav-item active" type="button" data-scroll-target="searchPanel">Acervo</button>
+          <button class="nav-item" type="button" data-scroll-target="formPanel">Formulario</button>
+          <button class="nav-item" type="button" data-scroll-target="apiPanel">API ONR</button>
+          <button class="nav-item" type="button" data-scroll-target="settingsPanel">Configuracoes</button>
         </nav>
       </aside>
 
       <main class="content">
         <header class="topbar">
           <div>
-            <h1>Preparacao para envio ONR</h1>
-            <p>Base inicial do aplicativo com canal de atualizacao via GitHub Releases.</p>
+            <h1>Acervo ONR</h1>
+            <p id="headlineStatus">Aguardando configuracao do acervo.</p>
           </div>
-          <button class="ghost-button" id="openLatestButton" type="button">Abrir latest</button>
+          <button class="ghost-button" id="openLatestButton" type="button">Latest</button>
         </header>
 
-        <section class="work-grid">
-          <div class="panel wide">
+        <section class="layout-grid">
+          <section class="panel" id="settingsPanel">
             <div class="panel-header">
               <div>
-                <h2>Fluxo seguro</h2>
-                <p>O envio para a ONR e as atualizacoes exigem confirmacao humana.</p>
+                <h2>Configuracoes</h2>
+                <p>Acervo, KML e token.</p>
+              </div>
+              <button class="primary-button" id="saveSettingsButton" type="button">Salvar</button>
+            </div>
+
+            <div class="settings-grid">
+              <label class="field span-2">
+                <span>Pasta de imagens</span>
+                <div class="picker-row">
+                  <input id="imagesRootInput" type="text" readonly />
+                  <button class="secondary-button" id="chooseImagesButton" type="button">Escolher</button>
+                </div>
+              </label>
+
+              <label class="field span-2">
+                <span>Arquivo KML</span>
+                <div class="picker-row">
+                  <input id="kmlPathInput" type="text" readonly />
+                  <button class="secondary-button" id="chooseKmlButton" type="button">Escolher</button>
+                </div>
+              </label>
+
+              <label class="field">
+                <span>Base URL</span>
+                <input id="apiBaseUrlInput" type="text" spellcheck="false" />
+              </label>
+
+              <label class="field">
+                <span>Token API</span>
+                <input id="apiTokenInput" type="password" spellcheck="false" />
+              </label>
+
+              <label class="field">
+                <span>OCR</span>
+                <input id="ocrLanguageInput" type="text" spellcheck="false" />
+              </label>
+
+              <label class="field">
+                <span>Limite de paginas</span>
+                <input id="maxOcrPagesInput" type="number" min="0" step="1" />
+              </label>
+            </div>
+          </section>
+
+          <section class="panel" id="searchPanel">
+            <div class="panel-header">
+              <div>
+                <h2>Matricula</h2>
+                <p>OCR de tras para frente.</p>
               </div>
             </div>
 
-            <div class="steps">
-              <div class="step done">
-                <span>1</span>
-                <div>
-                  <strong>Canal de update</strong>
-                  <p>Release GitHub em madiaznx/MadiaznX-ONR-updates.</p>
-                </div>
-              </div>
-              <div class="step">
-                <span>2</span>
-                <div>
-                  <strong>Leitura de acervo</strong>
-                  <p>Modulo OCR/KML sera ligado ao formulario ONR editavel.</p>
-                </div>
-              </div>
-              <div class="step">
-                <span>3</span>
-                <div>
-                  <strong>Envio pela API</strong>
-                  <p>Geracao de shapefile, upload por URL assinada e confirmacao manual.</p>
-                </div>
+            <div class="search-row">
+              <input id="matriculaInput" type="text" placeholder="Numero da matricula" spellcheck="false" />
+              <button class="primary-button" id="analyzeButton" type="button">Ler</button>
+            </div>
+
+            <div class="status-box" id="ocrStatus">Nenhuma leitura iniciada.</div>
+            <div class="warning-list" id="warningList"></div>
+          </section>
+
+          <section class="panel" id="polygonPanel">
+            <div class="panel-header">
+              <div>
+                <h2>Poligono</h2>
+                <p id="polygonCount">Nenhum KML carregado.</p>
               </div>
             </div>
-          </div>
 
-          <div class="panel">
+            <label class="field">
+              <span>Placemark</span>
+              <select id="polygonSelect"></select>
+            </label>
+
+            <dl class="metric-list" id="polygonMetrics"></dl>
+          </section>
+
+          <section class="panel wide" id="formPanel">
+            <div class="panel-header">
+              <div>
+                <h2>Formulario ONR</h2>
+                <p id="formValidation">Campos obrigatorios pendentes.</p>
+              </div>
+              <button class="secondary-button" id="newRecordButton" type="button">Limpar</button>
+            </div>
+
+            <form class="onr-form" id="onrForm"></form>
+          </section>
+
+          <section class="panel" id="apiPanel">
+            <div class="panel-header">
+              <div>
+                <h2>API ONR</h2>
+                <p>Geracao local e envio confirmado.</p>
+              </div>
+            </div>
+
+            <div class="actions vertical">
+              <button class="secondary-button" id="prepareButton" type="button">Gerar shapefile</button>
+              <button class="primary-button" id="sendButton" type="button">Enviar para ONR</button>
+            </div>
+
+            <div class="status-box" id="apiStatus">Nenhum envio iniciado.</div>
+
+            <div class="status-row">
+              <input id="importationIdInput" type="text" placeholder="importation_id" spellcheck="false" />
+              <button class="secondary-button" id="statusButton" type="button">Status</button>
+            </div>
+          </section>
+
+          <section class="panel">
             <div class="panel-header">
               <div>
                 <h2>Atualizacoes</h2>
-                <p id="packageState">Executando em modo local.</p>
+                <p id="packageState">Modo local.</p>
               </div>
             </div>
 
@@ -76,26 +165,11 @@
             <progress class="progress" id="updateProgress" max="100" value="0"></progress>
 
             <div class="actions">
-              <button class="primary-button" id="checkButton" type="button">Verificar</button>
+              <button class="secondary-button" id="checkButton" type="button">Verificar</button>
               <button class="secondary-button" id="downloadButton" type="button" disabled>Baixar</button>
               <button class="secondary-button" id="installButton" type="button" disabled>Instalar</button>
             </div>
-          </div>
-
-          <div class="panel">
-            <div class="panel-header">
-              <div>
-                <h2>Artefatos</h2>
-                <p>Nomes publicados na release atual.</p>
-              </div>
-            </div>
-
-            <ul class="artifact-list">
-              <li><code>MadiaznX-ONR-Setup-v0.1.0.exe</code></li>
-              <li><code>MadiaznX-ONR-Setup.exe</code></li>
-              <li><code>latest.yml</code></li>
-            </ul>
-          </div>
+          </section>
         </section>
       </main>
     </div>
