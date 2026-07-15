@@ -209,9 +209,8 @@ function extractFields(text, fallbackMatricula) {
   const rip = firstMatch(normalizedText, /RIP\D{0,12}(\d{5,})/i);
   const transcricao = firstMatch(normalizedText, /transcri[cç][aã]o\D{0,12}([A-Z0-9.\-\/]+)/i);
   const itbi = firstMatch(normalizedText, /ITBI\D{0,12}(?:R\$\s*)?([\d.]+,\d{2})/i);
-  const dataMatricula = firstMatch(normalizedText, /(?:data\s+da\s+matr[ií]cula|abertura)\D{0,20}(\d{2}\/\d{2}\/\d{4})/i)
-    || firstMatch(normalizedText, /\b(\d{2}\/\d{2}\/\d{4})\b/);
-  const livro = firstMatch(normalizedText, /livro\D{0,8}([A-Z0-9.\-]+)/i);
+  const dataMatricula = extractOpeningDate(normalizedText);
+  const livro = '2';
   const folha = firstMatch(normalizedText, /folha\D{0,8}([A-Z0-9.\-]+)/i);
   const ownerLine = currentOwner.name || firstLine(lines, /(adquirente|outorgado|comprador|propriet[aá]ri[ao]s?|fiduciante)/i);
   const ownerName = cleanPersonName(cleanLabeledLine(ownerLine));
@@ -252,6 +251,88 @@ function extractFields(text, fallbackMatricula) {
     isClosed: /matr[ií]cula\s+encerrada|encerrad[ao]\s+(?:a|esta)\s+matr[ií]cula|ficando\s+em\s+consequ[eê]ncia\s+encerrada\s+esta\s+matr[ií]cula|im[oó]vel\s+encerrado/i.test(normalizedText),
     hasTransferHints: /transfer[eê]ncia|alien[aç][aã]o|compra\s+e\s+venda|venda\s+e\s+compra|vendido|adquirente|transmitente|transmitiram|outorgante/i.test(normalizedText)
   };
+}
+
+function extractOpeningDate(text) {
+  const value = String(text || '').replace(/\s+/g, ' ');
+  const explicitDate = firstMatch(value, /(?:data\s+da\s+matr[ií]cula|abertura)\D{0,30}(\d{1,2}\/\d{1,2}\/\d{4})/i);
+  if (explicitDate) return normalizeSlashDate(explicitDate);
+
+  const headerDate = extractOpeningHeaderDate(value);
+  if (headerDate) return headerDate;
+
+  return '';
+}
+
+function extractOpeningHeaderDate(text) {
+  const value = String(text || '');
+  const candidates = [];
+  const monthNames = 'janeiro|fevereiro|mar[cç]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro';
+  const patterns = [
+    new RegExp(`\\b(\\d{1,2})\\s+(?:de\\s+)?(${monthNames})\\s+(?:de\\s+)?(\\d{4})\\b`, 'gi'),
+    new RegExp(`\\b(\\d{1,2})\\s+(?:[a-zç]{1,8}\\s+)?(\\d{4})\\s+(${monthNames})\\b`, 'gi')
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of value.matchAll(pattern)) {
+      const month = monthNumber(match[2]) || monthNumber(match[3]);
+      const year = /^\d{4}$/.test(match[2]) ? match[2] : match[3];
+      const date = formatDateParts(match[1], month, year);
+      if (!date) continue;
+
+      const before = value.slice(Math.max(0, match.index - 450), match.index);
+      const after = value.slice(match.index, match.index + 450);
+      const beforeSearch = textForSearch(before);
+      const afterSearch = textForSearch(after);
+      const contextSearch = `${beforeSearch} ${afterSearch}`;
+      let score = 0;
+
+      const hasHeaderSignal = /(matricula\s+ficha|cns|livro\s+n|registro\s+geral|oficial\s+de\s+registro\s+de\s+imoveis)/i.test(contextSearch);
+      if (hasHeaderSignal) score += 5;
+      if (hasHeaderSignal && /\bimovel\b/.test(afterSearch)) score += 2;
+      if (/\b(?:av|r)\.?\s*[-:]?\s*\d{1,4}\b|protocolo|escritura|averbacao|registro\s+anterior/i.test(beforeSearch)) score -= 8;
+
+      candidates.push({ date, index: match.index, score });
+    }
+  }
+
+  candidates.sort((left, right) => {
+    if (left.score !== right.score) return right.score - left.score;
+    return right.index - left.index;
+  });
+
+  return candidates.length && candidates[0].score > 0 ? candidates[0].date : '';
+}
+
+function monthNumber(value) {
+  const months = {
+    janeiro: '01',
+    fevereiro: '02',
+    marco: '03',
+    abril: '04',
+    maio: '05',
+    junho: '06',
+    julho: '07',
+    agosto: '08',
+    setembro: '09',
+    outubro: '10',
+    novembro: '11',
+    dezembro: '12'
+  };
+  return months[textForSearch(value)];
+}
+
+function formatDateParts(day, month, year) {
+  const dd = String(Number.parseInt(day, 10)).padStart(2, '0');
+  const yyyy = String(year || '').trim();
+  if (!month || !/^\d{4}$/.test(yyyy) || !/^\d{2}$/.test(dd)) return '';
+  return `${dd}/${month}/${yyyy}`;
+}
+
+function normalizeSlashDate(value) {
+  const match = String(value || '').match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+  if (!match) return '';
+  return formatDateParts(match[1], String(Number.parseInt(match[2], 10)).padStart(2, '0'), match[3]);
 }
 
 function extractCurrentOwner(text, lines) {
@@ -422,8 +503,9 @@ function extractPropertyAddress(text, lines) {
 function collectPropertyAddressContexts(text, lines) {
   const contexts = [];
   const contextPatterns = [
-    /(?:averba[cç][aã]o|av\.)\D{0,80}(?:denomina[cç][aã]o\s+de\s+logradouro|logradouro|(?:n[uú]mero|numero)\s+predial|constru[cç][aã]o|recebeu\s+(?:o\s+)?(?:n[ºo°?.]?|n[uú]mero|numero))[^.]{0,420}/gi,
+    /(?:averba[cç][aã]o|av\.)\D{0,100}(?:denomina[cç][aã]o\s+de\s+logradouro|logradouro|(?:n[uú]mero|numero)\s+(?:predial|do\s+im[oó]vel)|numera[cç][aã]o\s+predial|constru[cç][aã]o|recebeu\s+(?:o\s+)?(?:n[ºo°?.]?|n[uú]mero|numero))[^.]{0,420}/gi,
     /(?:denomina[cç][aã]o\s+de\s+logradouro|passou\s+a\s+denominar-se|logradouro\s+(?:p[uú]blico\s+)?denominado)[^.]{0,420}/gi,
+    /(?:(?:n[uú]mero|numero)\s+do\s+im[oó]vel|numera[cç][aã]o\s+predial)[^.]{0,320}/gi,
     /(?:constru[cç][aã]o|pr[eé]dio|casa|galp[aã]o|apartamento|terreno|lote)[^.]{0,360}(?:situad[ao]|localizad[ao]|com\s+frente\s+para|frente\s+para|sob\s+n[ºo°?.]?|recebeu\s+(?:o\s+)?(?:n[ºo°?.]?|n[uú]mero|numero))[^.]{0,420}/gi
   ];
 
@@ -639,13 +721,16 @@ function extractPropertyNumberFallback(context) {
 
 function extractPropertyNumberFromSearch(context) {
   const search = textForSearch(context);
-  const hasBuildingNumberSignal = /\b(predio|casa|galpao|construcao|numero\s+predial|recebeu)\b/i.test(search);
+  const hasBuildingNumberSignal = /\b(?:predio|casa|galpao|construcao|numero\s+(?:predial|do\s+imovel)|numeracao\s+predial|recebeu)\b|possui\s+atualmente\s+o\s+n[o.]?/i.test(search);
   if (/sem\s+benfeitorias/i.test(search) && !hasBuildingNumberSignal) return '';
   if (/\b(incra|ccir|cadastro|cadastrado|certificado\s+de\s+cadastro)\b/i.test(search) && !hasBuildingNumberSignal) {
     return '';
   }
 
   const patterns = [
+    /(?:numero\s+do\s+imovel|numeracao\s+predial)\D{0,80}?(?:agora\s+)?(?:e|passou\s+a\s+ser|passou\s+a\s+ter|recebeu|sob\s+n[o?.]?)\s+([a-z0-9][a-z0-9\-\/]*)/i,
+    /(?:imovel\s+objeto\s+desta\s+matricula|imovel)\D{0,120}?\bpossui\s+atualmente\s+o\s+n[o?.]?\s+([a-z0-9][a-z0-9\-\/]*)/i,
+    /(?:passou\s+a\s+(?:ser|ter)|recebeu)\s+(?:o\s+)?(?:numero\s+do\s+imovel|numero\s+predial|n[o?.]?)\s+([a-z0-9][a-z0-9\-\/]*)/i,
     /(?:predio|casa|galpao|construcao)\s+n[o?.]?\s+([a-z0-9][a-z0-9\-\/]*)/i,
     /(?:recebeu|recebe|passou\s+a\s+ter)\s+(?:o\s+)?(?:numero(?:\s+predial)?|n[o?.]?)\s+([a-z0-9][a-z0-9\-\/]*)/i,
     /numero\s+predial\D{0,12}([a-z0-9][a-z0-9\-\/]*)/i,
@@ -729,6 +814,8 @@ function propertyContextSlice(value) {
     /imovel\s+objeto/i,
     /denominacao\s+de\s+logradouro/i,
     /logradouro/i,
+    /numero\s+do\s+imovel/i,
+    /numeracao\s+predial/i,
     /numero\s+predial/i,
     /construcao/i,
     /\b(?:um|uma|o|a)\s+(?:imovel|terreno|predio|casa|apartamento|galpao|lote)\b/i,
@@ -759,19 +846,41 @@ function extractCadastroRegistro(text) {
   const candidates = [];
   const value = String(text || '');
   const patterns = [
-    /\b(?:contribuinte|cadastro\s+municipal|cadastro\s+imobili[aá]rio|inscri[cç][aã]o\s+municipal)[^.;]{0,120}?\bB\.?\s*C\.?\s*(?:n[\u00ba\u00b0o?.]?|n[uú]mero|numero|n\.)?\s*([A-Z0-9][A-Z0-9.\-\/]{1,})/gi,
-    /\bB\.?\s*C\.?\s*(?:n[\u00ba\u00b0o?.]?|n[uú]mero|numero|n\.)\s*([A-Z0-9][A-Z0-9.\-\/]{1,})/gi,
-    /\b(?:cadastro\s+(?:no\s+)?INCRA|INCRA)[^.;]{0,120}?(?:sob\s+)?(?:n[\u00ba\u00b0o?.]?|n[uú]mero|numero|n\.)\s*([A-Z0-9][A-Z0-9.\-\/]{2,})/gi
+    {
+      pattern: /\b(?:averba[cç][aã]o\s+de\s+)?cadastro\s+municipal\b[^.]{0,280}?\b(?:atualmente\s+)?cadastrad[ao]\s+sob\s+(?:n[\u00ba\u00b0o?.]?|n[uú]mero|numero|n\.)\s*([A-Z0-9][A-Z0-9.\-\/]{1,})/gi,
+      score: 50
+    },
+    {
+      pattern: /\b(?:averba[cç][aã]o\s+de\s+)?(?:cadastro\s+municipal|cadastro\s+imobili[aá]rio|contribuinte)\b[^.]{0,260}?\b(?:agora\s+)?(?:o\s+)?cadastro\s+(?:[eé]|passou\s+a\s+ser)\s*([A-Z0-9][A-Z0-9.\-\/]{1,})/gi,
+      score: 50
+    },
+    {
+      pattern: /\b(?:im[oó]vel\s+objeto\s+desta\s+matr[ií]cula|im[oó]vel)[^.]{0,180}?\b(?:atualmente\s+)?cadastrad[ao]\s+sob\s+(?:n[\u00ba\u00b0o?.]?|n[uú]mero|numero|n\.)\s*([A-Z0-9][A-Z0-9.\-\/]{1,})/gi,
+      score: 45
+    },
+    {
+      pattern: /\b(?:contribuinte|cadastro\s+municipal|cadastro\s+imobili[aá]rio|inscri[cç][aã]o\s+municipal)[^.;]{0,160}?\bB\.?\s*C\.?\s*(?:n[\u00ba\u00b0o?.]?|n[uú]mero|numero|n\.)?\s*([A-Z0-9][A-Z0-9.\-\/]{1,})/gi,
+      score: 20
+    },
+    {
+      pattern: /\bB\.?\s*C\.?\s*(?:n[\u00ba\u00b0o?.]?|n[uú]mero|numero|n\.)\s*([A-Z0-9][A-Z0-9.\-\/]{1,})/gi,
+      score: 10
+    },
+    {
+      pattern: /\b(?:cadastro\s+(?:no\s+)?INCRA|INCRA)[^.;]{0,160}?(?:sob\s+)?(?:n[\u00ba\u00b0o?.]?|n[uú]mero|numero|n\.)\s*([A-Z0-9][A-Z0-9.\-\/]{2,})/gi,
+      score: 20
+    }
   ];
 
-  for (const pattern of patterns) {
+  for (const { pattern, score } of patterns) {
     for (const match of value.matchAll(pattern)) {
       const cadastro = cleanCadastroRegistroValue(match[1]);
       if (!cadastro) continue;
       candidates.push({
         value: cadastro,
         index: match.index,
-        act: actNumberBefore(value, match.index)
+        act: actNumberBefore(value, match.index),
+        score
       });
     }
   }
@@ -782,7 +891,8 @@ function extractCadastroRegistro(text) {
       if (right.act == null) return -1;
       return right.act - left.act;
     }
-    return left.index - right.index;
+    if (left.score !== right.score) return right.score - left.score;
+    return right.index - left.index;
   });
 
   return candidates.length ? candidates[0].value : '';

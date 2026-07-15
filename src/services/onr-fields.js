@@ -147,8 +147,8 @@ function createRecord({ matricula, ocrFields, polygon, settings }) {
     applyPolygon(fields, polygon);
   }
 
-  fields.descricaoInterna = fields.descricaoInterna || `Importacao da matricula ${fields.matricula}`;
-  fields.descricaoPublica = fields.descricaoPublica || fields.nomeImovel || fields.endereco || `Matricula ${fields.matricula}`;
+  fields.descricaoInterna = fields.descricaoInterna || '';
+  fields.descricaoPublica = fields.descricaoPublica || '';
   return fields;
 }
 
@@ -236,7 +236,7 @@ function toApiPayload(fields, fileNames) {
     nivel_publicidade: Number(fields.nivelPublicidade || 2),
     classificacao_poligonos: Number(fields.classificacaoPoligonos || 1),
     numero_prenotacao: String(fields.numeroPrenotacao || fields.matricula || '').trim(),
-    descricao_importacao: String(fields.descricaoInterna || fields.descricaoPublica || `Matricula ${fields.matricula}`).trim(),
+    descricao_importacao: String(fields.descricaoInterna || fields.descricaoPublica || '').trim(),
     nomes_arquivos: fileNames
   };
 }
