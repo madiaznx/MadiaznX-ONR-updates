@@ -1,7 +1,12 @@
 node_modules/
 dist/
 out/
+tmp/
+.venv-paddle/
+[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]/
 *.log
 *.tmp
+*.traineddata
+myplaces.kml
 .env
 .env.*

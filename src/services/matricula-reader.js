@@ -5,6 +5,8 @@ const UTIF = require('utif');
 const { PNG } = require('pngjs');
 
 const IMAGE_EXTENSIONS = new Set(['.tif', '.tiff', '.png', '.jpg', '.jpeg', '.bmp', '.webp']);
+const OCR_ENGINES = new Set(['paddle', 'tesseract']);
+let paddleModulePromise = null;
 
 async function analyzeMatricula({ imagesRoot, matricula, settings, onProgress }) {
   const normalized = normalizeMatricula(matricula);
@@ -33,10 +35,11 @@ async function analyzeMatricula({ imagesRoot, matricula, settings, onProgress })
   const maxPages = Math.max(0, Number(settings.maxOcrPages || 0));
   const selectedFiles = maxPages > 0 ? orderedFiles.slice(0, maxPages) : orderedFiles;
   const skippedFiles = orderedFiles.length - selectedFiles.length;
+  const engine = normalizeOcrEngine(settings.ocrEngine);
 
   emit(onProgress, {
     stage: 'ocr-start',
-    message: `OCR em ${selectedFiles.length} arquivo(s), do fim para o inicio...`
+    message: `${ocrEngineLabel(engine)} em ${selectedFiles.length} arquivo(s), do fim para o inicio...`
   });
 
   const pages = await ocrFiles(selectedFiles, settings, onProgress);
@@ -46,6 +49,10 @@ async function analyzeMatricula({ imagesRoot, matricula, settings, onProgress })
 
   if (skippedFiles > 0) {
     warnings.push(`OCR limitado aos ${selectedFiles.length} arquivos mais recentes; ${skippedFiles} arquivo(s) ficaram fora do OCR.`);
+  }
+  const failedPages = pages.filter((page) => page.error);
+  if (failedPages.length) {
+    warnings.push(`${failedPages.length} pagina(s) falharam no ${ocrEngineLabel(engine)}. Revise a leitura antes de enviar.`);
   }
   if (fields.isClosed) {
     warnings.push('A leitura encontrou indicio de matricula encerrada. Revise antes de enviar.');
@@ -57,6 +64,7 @@ async function analyzeMatricula({ imagesRoot, matricula, settings, onProgress })
   return {
     matricula: normalized.digits,
     files: orderedFiles,
+    engine,
     pages,
     text,
     fields,
@@ -120,49 +128,201 @@ async function collectImages(dir, normalized, mode, depth) {
   return files;
 }
 
-async function ocrFiles(files, settings, onProgress) {
+async function ocrFiles(files, settings = {}, onProgress) {
+  const engine = normalizeOcrEngine(settings.ocrEngine);
+  return engine === 'paddle'
+    ? ocrFilesWithPaddle(files, settings, onProgress)
+    : ocrFilesWithTesseract(files, settings, onProgress);
+}
+
+async function ocrFilesWithTesseract(files, settings = {}, onProgress) {
+  const pageImages = await collectOcrPageImages(files, onProgress);
+  const session = await createTesseractOcrSession(settings, onProgress);
+  try {
+    return await session.recognizePageImages(pageImages, onProgress);
+  } finally {
+    await session.destroy();
+  }
+}
+
+async function ocrFilesWithPaddle(files, settings = {}, onProgress) {
+  const pageImages = await collectOcrPageImages(files, onProgress);
+  const session = await createPaddleOcrSession(settings, onProgress);
+  try {
+    return await session.recognizePageImages(pageImages, onProgress);
+  } finally {
+    await session.destroy();
+  }
+}
+
+async function collectOcrPageImages(files, onProgress) {
+  const pages = [];
+
+  for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
+    const file = files[fileIndex];
+    emit(onProgress, {
+      stage: 'ocr-file',
+      message: `Preparando ${path.basename(file)} (${fileIndex + 1}/${files.length})`
+    });
+
+    const images = await imageBuffersForOcr(file);
+    for (let pageIndex = images.length - 1; pageIndex >= 0; pageIndex -= 1) {
+      pages.push({
+        file,
+        fileIndex,
+        pageIndex,
+        imageBuffer: images[pageIndex]
+      });
+    }
+  }
+
+  return pages;
+}
+
+async function createTesseractOcrSession(settings = {}, onProgress) {
   const language = settings.ocrLanguage || 'por+eng';
+  const workerCount = clampInteger(settings.tesseractWorkers || settings.ocrWorkers, 1, 8, 1);
+  emit(onProgress, {
+    stage: 'ocr-tesseract-init',
+    message: `Carregando ${workerCount} worker(s) Tesseract...`
+  });
+  const workers = await Promise.all(Array.from({ length: workerCount }, (_unused, index) => createTesseractWorker(language, onProgress, index + 1)));
+
+  return {
+    engine: 'tesseract',
+    async recognizePageImages(pageImages, progressCallback = onProgress) {
+      const pages = new Array(pageImages.length);
+      let nextIndex = 0;
+
+      async function runWorker(worker, workerNumber) {
+        while (nextIndex < pageImages.length) {
+          const index = nextIndex;
+          nextIndex += 1;
+          const page = pageImages[index];
+          emit(progressCallback, {
+            stage: 'ocr-page',
+            message: `Tesseract W${workerNumber} ${path.basename(page.file)} pagina ${page.pageIndex + 1} (${index + 1}/${pageImages.length})`
+          });
+
+          const result = await worker.recognize(page.imageBuffer);
+          pages[index] = {
+            file: page.file,
+            pageIndex: page.pageIndex,
+            engine: 'tesseract',
+            text: (result.data && result.data.text ? result.data.text : '').trim()
+          };
+        }
+      }
+
+      await Promise.all(workers.map((worker, index) => runWorker(worker, index + 1)));
+      return pages.filter(Boolean);
+    },
+    async destroy() {
+      await Promise.all(workers.map((worker) => worker.terminate()));
+    }
+  };
+}
+
+async function createTesseractWorker(language, onProgress, workerNumber) {
   const worker = await createWorker(language, 1, {
     logger: (message) => {
       if (message.status) {
         emit(onProgress, {
           stage: 'ocr-worker',
-          message: `${message.status} ${Math.round((message.progress || 0) * 100)}%`
+          message: `Tesseract W${workerNumber}: ${message.status} ${Math.round((message.progress || 0) * 100)}%`
         });
       }
     }
   });
 
-  const pages = [];
-  try {
-    await worker.setParameters({
-      preserve_interword_spaces: '1',
-      user_defined_dpi: '300'
-    });
+  await worker.setParameters({
+    preserve_interword_spaces: '1',
+    user_defined_dpi: '300'
+  });
 
-    for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
-      const file = files[fileIndex];
-      emit(onProgress, {
-        stage: 'ocr-file',
-        message: `Lendo ${path.basename(file)} (${fileIndex + 1}/${files.length})`
+  return worker;
+}
+
+async function createPaddleOcrSession(settings = {}, onProgress) {
+  const paddle = await loadPaddleModule();
+  const model = paddleModelPreset(paddle, settings.paddleModel);
+  const strategy = normalizePaddleStrategy(settings.paddleStrategy);
+  const maxSideLength = clampInteger(settings.paddleMaxSideLength, 640, 2560, 1280);
+  const processingEngine = normalizePaddleProcessingEngine(settings.paddleProcessingEngine);
+  const service = new paddle.PaddleOcrService({
+    model,
+    detection: { maxSideLength },
+    recognition: { strategy },
+    processing: { engine: processingEngine },
+    session: {
+      executionProviders: ['cpu'],
+      graphOptimizationLevel: 'all'
+    },
+    debugging: {
+      verbose: Boolean(settings.paddleVerbose)
+    }
+  });
+
+  emit(onProgress, {
+    stage: 'ocr-paddle-init',
+    message: `Carregando Paddle ONNX (${normalizePaddleModel(settings.paddleModel)})...`
+  });
+  await service.initialize();
+
+  return {
+    engine: 'paddle',
+    async recognizePageImages(pageImages, progressCallback = onProgress) {
+      if (!pageImages.length) return [];
+      emit(progressCallback, {
+        stage: 'ocr-paddle-start',
+        message: `Paddle ONNX em ${pageImages.length} pagina(s)...`
       });
 
-      const images = await imageBuffersForOcr(file);
-      for (let pageIndex = images.length - 1; pageIndex >= 0; pageIndex -= 1) {
-        const imageBuffer = images[pageIndex];
-        const result = await worker.recognize(imageBuffer);
-        pages.push({
-          file,
-          pageIndex,
-          text: (result.data && result.data.text ? result.data.text : '').trim()
+      const pages = [];
+      for (let index = 0; index < pageImages.length; index += 1) {
+        const page = pageImages[index];
+        emit(progressCallback, {
+          stage: 'ocr-paddle-page',
+          message: `Paddle ONNX ${path.basename(page.file)} pagina ${page.pageIndex + 1} (${index + 1}/${pageImages.length})`
         });
-      }
-    }
-  } finally {
-    await worker.terminate();
-  }
 
-  return pages;
+        try {
+          const result = await service.recognize(toArrayBuffer(page.imageBuffer), {
+            noCache: true,
+            flatten: true,
+            strategy
+          });
+          pages.push({
+            file: page.file,
+            pageIndex: page.pageIndex,
+            engine: 'paddle',
+            confidence: result && result.confidence,
+            text: (result && result.text ? result.text : '').trim()
+          });
+        } catch (error) {
+          pages.push({
+            file: page.file,
+            pageIndex: page.pageIndex,
+            engine: 'paddle',
+            text: '',
+            error: error && error.message ? error.message : String(error || 'Falha no Paddle ONNX')
+          });
+        }
+      }
+
+      return pages;
+    },
+    async destroy() {
+      await service.destroy();
+    }
+  };
+}
+
+async function loadPaddleModule() {
+  if (!paddleModulePromise) {
+    paddleModulePromise = import('ppu-paddle-ocr');
+  }
+  return paddleModulePromise;
 }
 
 async function imageBuffersForOcr(file) {
@@ -296,12 +456,87 @@ function extractOpeningHeaderDate(text) {
     }
   }
 
+  const dayMonthPattern = new RegExp(`\\b(\\d{1,2})\\b[^;\\n]{0,90}?\\b(${monthNames})\\b`, 'gi');
+  for (const match of value.matchAll(dayMonthPattern)) {
+    const beforeDay = value[match.index - 1] || '';
+    const afterDay = value[match.index + String(match[1]).length] || '';
+    if (/[.\-\/\d]/.test(beforeDay) || /[.\-\/\d]/.test(afterDay)) continue;
+
+    const year = nearestYearAround(value, match.index, 140);
+    const date = formatDateParts(match[1], monthNumber(match[2]), year);
+    if (!date) continue;
+
+    const before = value.slice(Math.max(0, match.index - 450), match.index);
+    const after = value.slice(match.index, match.index + 450);
+    const beforeSearch = textForSearch(before);
+    const afterSearch = textForSearch(after);
+    const contextSearch = `${beforeSearch} ${afterSearch}`;
+    let score = 0;
+
+    const hasHeaderSignal = /(matricula\s+ficha|cns|livro\s+n|registro\s+geral|oficial\s+de\s+registro\s+de\s+imoveis)/i.test(contextSearch);
+    if (hasHeaderSignal) score += 4;
+    if (hasHeaderSignal && /\bimovel\b/.test(afterSearch)) score += 2;
+    if (/\b(?:av|r)\.?\s*[-:]?\s*\d{1,4}\b|protocolo|escritura|averbacao|registro\s+anterior/i.test(beforeSearch)) score -= 8;
+
+    candidates.push({ date, index: match.index, score });
+  }
+
+  const monthOnlyPattern = new RegExp(`\\b(${monthNames})\\b`, 'gi');
+  for (const match of value.matchAll(monthOnlyPattern)) {
+    const prefixStart = Math.max(0, match.index - 100);
+    const prefix = value.slice(prefixStart, match.index);
+    const dayCandidates = [...prefix.matchAll(/\b(\d{1,2})\b/g)]
+      .map((dayMatch) => ({
+        day: dayMatch[1],
+        index: prefixStart + dayMatch.index
+      }))
+      .filter((candidate) => {
+        const beforeDay = value[candidate.index - 1] || '';
+        const afterDay = value[candidate.index + String(candidate.day).length] || '';
+        const dayNumber = Number.parseInt(candidate.day, 10);
+        return dayNumber >= 1 && dayNumber <= 31 && !/[.\-\/\d]/.test(beforeDay) && !/[.\-\/\d]/.test(afterDay);
+      });
+    const dayCandidate = dayCandidates[dayCandidates.length - 1];
+    if (!dayCandidate) continue;
+
+    const year = nearestYearAround(value, dayCandidate.index, 160) || nearestYearAround(value, match.index, 160);
+    const date = formatDateParts(dayCandidate.day, monthNumber(match[1]), year);
+    if (!date) continue;
+
+    const before = value.slice(Math.max(0, dayCandidate.index - 450), dayCandidate.index);
+    const after = value.slice(dayCandidate.index, dayCandidate.index + 450);
+    const beforeSearch = textForSearch(before);
+    const afterSearch = textForSearch(after);
+    const contextSearch = `${beforeSearch} ${afterSearch}`;
+    let score = 0;
+
+    const hasHeaderSignal = /(matricula\s+ficha|cns|livro\s+n|registro\s+geral|oficial\s+de\s+registro\s+de\s+imoveis)/i.test(contextSearch);
+    if (hasHeaderSignal) score += 4;
+    if (hasHeaderSignal && /\bimovel\b/.test(afterSearch)) score += 2;
+    if (/\b(?:av|r)\.?\s*[-:]?\s*\d{1,4}\b|protocolo|escritura|averbacao|registro\s+anterior/i.test(beforeSearch)) score -= 8;
+
+    candidates.push({ date, index: dayCandidate.index, score });
+  }
+
   candidates.sort((left, right) => {
     if (left.score !== right.score) return right.score - left.score;
     return right.index - left.index;
   });
 
   return candidates.length && candidates[0].score > 0 ? candidates[0].date : '';
+}
+
+function nearestYearAround(text, index, distance) {
+  const value = String(text || '');
+  const start = Math.max(0, index - distance);
+  const window = value.slice(start, index + distance);
+  const years = [...window.matchAll(/\b(19\d{2}|20\d{2})\b/g)]
+    .map((match) => ({
+      year: match[1],
+      distance: Math.abs((start + match.index) - index)
+    }))
+    .sort((left, right) => left.distance - right.distance);
+  return years.length ? years[0].year : '';
 }
 
 function monthNumber(value) {
@@ -323,7 +558,9 @@ function monthNumber(value) {
 }
 
 function formatDateParts(day, month, year) {
-  const dd = String(Number.parseInt(day, 10)).padStart(2, '0');
+  const dayNumber = Number.parseInt(day, 10);
+  if (!Number.isFinite(dayNumber) || dayNumber < 1 || dayNumber > 31) return '';
+  const dd = String(dayNumber).padStart(2, '0');
   const yyyy = String(year || '').trim();
   if (!month || !/^\d{4}$/.test(yyyy) || !/^\d{2}$/.test(dd)) return '';
   return `${dd}/${month}/${yyyy}`;
@@ -899,11 +1136,16 @@ function extractCadastroRegistro(text) {
 }
 
 function cleanCadastroRegistroValue(value) {
-  const clean = String(value || '')
+  let clean = String(value || '')
     .replace(/\s+/g, '')
     .replace(/[;,.:]+$/g, '')
     .replace(/^[^A-Z0-9]+/i, '')
+    .toUpperCase()
     .trim();
+
+  if (/^[O0-9.\-\/]+$/.test(clean)) {
+    clean = clean.replace(/O/g, '0');
+  }
 
   if (!/\d/.test(clean)) return '';
   if (/^(?:BC|INCRA|SOB|NUMERO|N)$/i.test(clean)) return '';
@@ -999,6 +1241,53 @@ function cleanPersonNameStrict(value) {
     .trim();
 }
 
+function normalizeOcrEngine(value) {
+  const engine = String(value || 'paddle').trim().toLowerCase();
+  return OCR_ENGINES.has(engine) ? engine : 'paddle';
+}
+
+function ocrEngineLabel(engine) {
+  return normalizeOcrEngine(engine) === 'paddle' ? 'Paddle ONNX' : 'Tesseract';
+}
+
+function normalizePaddleModel(value) {
+  const model = String(value || '').trim().toLowerCase();
+  if (['v5-latin-mobile', 'v5-server', 'v6-small', 'v6-medium'].includes(model)) return model;
+  return 'v5-latin-mobile';
+}
+
+function paddleModelPreset(paddle, value) {
+  const model = normalizePaddleModel(value);
+  const presets = {
+    'v5-latin-mobile': paddle.V5_LATIN_MOBILE_MODEL,
+    'v5-server': paddle.V5_SERVER_MODEL,
+    'v6-small': paddle.V6_SMALL_MODEL,
+    'v6-medium': paddle.V6_MEDIUM_MODEL
+  };
+  return presets[model] || paddle.V5_LATIN_MOBILE_MODEL;
+}
+
+function normalizePaddleStrategy(value) {
+  const strategy = String(value || '').trim().toLowerCase();
+  return ['per-line', 'per-box', 'cross-line'].includes(strategy) ? strategy : 'per-line';
+}
+
+function normalizePaddleProcessingEngine(value) {
+  const engine = String(value || '').trim().toLowerCase();
+  return engine === 'canvas-native' ? 'canvas-native' : 'opencv';
+}
+
+function clampInteger(value, min, max, fallback) {
+  const number = Number.parseInt(value, 10);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
+}
+
+function toArrayBuffer(buffer) {
+  if (buffer instanceof ArrayBuffer) return buffer;
+  return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+}
+
 function naturalCompare(left, right) {
   return left.localeCompare(right, 'pt-BR', { numeric: true, sensitivity: 'base' });
 }
@@ -1023,5 +1312,14 @@ module.exports = {
   analyzeMatricula,
   findMatriculaImages,
   normalizeMatricula,
-  extractFields
+  extractFields,
+  ocrFiles,
+  ocrFilesWithTesseract,
+  ocrFilesWithPaddle,
+  collectOcrPageImages,
+  createTesseractOcrSession,
+  createPaddleOcrSession,
+  imageBuffersForOcr,
+  normalizeOcrEngine,
+  naturalCompare
 };

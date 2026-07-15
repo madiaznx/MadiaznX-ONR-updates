@@ -6,8 +6,14 @@ const DEFAULT_SETTINGS = {
   kmlPath: '',
   apiBaseUrl: 'https://www.mapa.onr.org.br/',
   apiToken: '',
+  ocrEngine: 'paddle',
   ocrLanguage: 'por+eng',
   maxOcrPages: 20,
+  tesseractWorkers: 8,
+  paddleModel: 'v5-latin-mobile',
+  paddleStrategy: 'per-line',
+  paddleMaxSideLength: 1280,
+  paddleConcurrency: 2,
   defaultUf: 'SP',
   defaultCity: 'Tremembe',
   defaultPolygonFormat: 'GeoJSON/Desenho',
@@ -53,8 +59,14 @@ function sanitizeSettings(value) {
   next.kmlPath = String(next.kmlPath || '').trim();
   next.apiBaseUrl = String(next.apiBaseUrl || DEFAULT_SETTINGS.apiBaseUrl).trim() || DEFAULT_SETTINGS.apiBaseUrl;
   next.apiToken = String(next.apiToken || '').trim();
+  next.ocrEngine = normalizeChoice(next.ocrEngine, ['paddle', 'tesseract'], DEFAULT_SETTINGS.ocrEngine);
   next.ocrLanguage = String(next.ocrLanguage || DEFAULT_SETTINGS.ocrLanguage).trim() || DEFAULT_SETTINGS.ocrLanguage;
   next.maxOcrPages = Math.max(0, Number.parseInt(next.maxOcrPages, 10) || DEFAULT_SETTINGS.maxOcrPages);
+  next.tesseractWorkers = clampInteger(next.tesseractWorkers, 1, 8, DEFAULT_SETTINGS.tesseractWorkers);
+  next.paddleModel = normalizeChoice(next.paddleModel, ['v5-latin-mobile', 'v5-server', 'v6-small', 'v6-medium'], DEFAULT_SETTINGS.paddleModel);
+  next.paddleStrategy = normalizeChoice(next.paddleStrategy, ['per-line', 'per-box', 'cross-line'], DEFAULT_SETTINGS.paddleStrategy);
+  next.paddleMaxSideLength = clampInteger(next.paddleMaxSideLength, 640, 2560, DEFAULT_SETTINGS.paddleMaxSideLength);
+  next.paddleConcurrency = clampInteger(next.paddleConcurrency, 1, 8, DEFAULT_SETTINGS.paddleConcurrency);
   next.defaultUf = String(next.defaultUf || DEFAULT_SETTINGS.defaultUf).trim().toUpperCase() || DEFAULT_SETTINGS.defaultUf;
   next.defaultCity = String(next.defaultCity || DEFAULT_SETTINGS.defaultCity).trim() || DEFAULT_SETTINGS.defaultCity;
   next.defaultPolygonFormat = String(next.defaultPolygonFormat || DEFAULT_SETTINGS.defaultPolygonFormat).trim();
@@ -63,6 +75,17 @@ function sanitizeSettings(value) {
   next.defaultPolygonCategory = Number.parseInt(next.defaultPolygonCategory, 10) || DEFAULT_SETTINGS.defaultPolygonCategory;
   next.defaultPropertyType = String(next.defaultPropertyType || DEFAULT_SETTINGS.defaultPropertyType).trim();
   return next;
+}
+
+function normalizeChoice(value, allowed, fallback) {
+  const text = String(value || '').trim().toLowerCase();
+  return allowed.includes(text) ? text : fallback;
+}
+
+function clampInteger(value, min, max, fallback) {
+  const number = Number.parseInt(value, 10);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
 }
 
 module.exports = {

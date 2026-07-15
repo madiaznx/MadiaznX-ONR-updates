@@ -76,8 +76,31 @@
               </label>
 
               <label class="field">
-                <span>OCR</span>
+                <span>Motor OCR</span>
+                <select id="ocrEngineInput">
+                  <option value="paddle">Paddle ONNX</option>
+                  <option value="tesseract">Tesseract</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Modelo Paddle</span>
+                <select id="paddleModelInput">
+                  <option value="v5-latin-mobile">v5 Latin</option>
+                  <option value="v5-server">v5 server</option>
+                  <option value="v6-small">v6 pequeno</option>
+                  <option value="v6-medium">v6 medio</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Idioma Tesseract</span>
                 <input id="ocrLanguageInput" type="text" spellcheck="false" />
+              </label>
+
+              <label class="field">
+                <span>Workers Tesseract</span>
+                <input id="tesseractWorkersInput" type="number" min="1" max="8" step="1" />
               </label>
 
               <label class="field">

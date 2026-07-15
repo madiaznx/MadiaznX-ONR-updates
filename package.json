@@ -1,6 +1,6 @@
 {
   "name": "madiaznx-onr",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Aplicativo Electron para preparar e enviar poligonos ao Mapa ONR.",
   "main": "src/main.js",
   "private": true,
@@ -12,6 +12,7 @@
   "scripts": {
     "start": "electron .",
     "check": "node scripts/smoke-check.js",
+    "compare:ocr": "node scripts/compare-ocr-engines.js",
     "build:win": "electron-builder --win nsis --x64",
     "prepare-release-assets": "node scripts/prepare-release-assets.js",
     "release:win": "electron-builder --win nsis --x64 && node scripts/prepare-release-assets.js"
@@ -20,7 +21,9 @@
     "@mapbox/shp-write": "^0.4.3",
     "electron-updater": "6.8.9",
     "fast-xml-parser": "^4.5.3",
+    "onnxruntime-node": "^1.27.0",
     "pngjs": "^7.0.0",
+    "ppu-paddle-ocr": "^6.1.0",
     "tesseract.js": "^5.1.1",
     "utif": "^3.1.0"
   },
@@ -40,6 +43,10 @@
       "package.json"
     ],
     "asar": true,
+    "asarUnpack": [
+      "node_modules/onnxruntime-node/**/*",
+      "node_modules/@napi-rs/canvas/**/*"
+    ],
     "win": {
       "target": [
         {

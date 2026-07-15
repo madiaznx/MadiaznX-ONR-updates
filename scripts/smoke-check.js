@@ -16,6 +16,7 @@ const requiredFiles = [
   'src/renderer/index.html',
   'src/renderer/renderer.js',
   'src/renderer/styles.css',
+  'scripts/compare-ocr-engines.js',
   'scripts/prepare-release-assets.js'
 ];
 

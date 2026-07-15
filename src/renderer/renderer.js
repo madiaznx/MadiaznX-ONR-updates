@@ -121,7 +121,10 @@ function cacheElements() {
     'kmlPathInput',
     'apiBaseUrlInput',
     'apiTokenInput',
+    'ocrEngineInput',
+    'paddleModelInput',
     'ocrLanguageInput',
+    'tesseractWorkersInput',
     'maxOcrPagesInput',
     'saveSettingsButton',
     'chooseImagesButton',
@@ -194,7 +197,10 @@ function renderSettings() {
   elements.kmlPathInput.value = state.settings.kmlPath || '';
   elements.apiBaseUrlInput.value = state.settings.apiBaseUrl || '';
   elements.apiTokenInput.value = state.settings.apiToken || '';
+  elements.ocrEngineInput.value = state.settings.ocrEngine || 'paddle';
+  elements.paddleModelInput.value = state.settings.paddleModel || 'v5-latin-mobile';
   elements.ocrLanguageInput.value = state.settings.ocrLanguage || 'por+eng';
+  elements.tesseractWorkersInput.value = state.settings.tesseractWorkers ?? 8;
   elements.maxOcrPagesInput.value = state.settings.maxOcrPages ?? 20;
 }
 
@@ -467,7 +473,10 @@ function readSettingsForm() {
     kmlPath: elements.kmlPathInput.value,
     apiBaseUrl: elements.apiBaseUrlInput.value,
     apiToken: elements.apiTokenInput.value,
+    ocrEngine: elements.ocrEngineInput.value,
+    paddleModel: elements.paddleModelInput.value,
     ocrLanguage: elements.ocrLanguageInput.value,
+    tesseractWorkers: elements.tesseractWorkersInput.value,
     maxOcrPages: elements.maxOcrPagesInput.value
   };
 }
