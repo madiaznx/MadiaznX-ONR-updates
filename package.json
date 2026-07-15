@@ -1,6 +1,6 @@
 {
   "name": "madiaznx-onr",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Aplicativo Electron para preparar e enviar poligonos ao Mapa ONR.",
   "main": "src/main.js",
   "private": true,
@@ -48,6 +48,7 @@
       "node_modules/@napi-rs/canvas/**/*"
     ],
     "win": {
+      "icon": "assets/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -59,6 +60,8 @@
       "artifactName": "MadiaznX-ONR-Setup-v${version}.${ext}"
     },
     "nsis": {
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,

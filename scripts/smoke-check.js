@@ -16,6 +16,8 @@ const requiredFiles = [
   'src/renderer/index.html',
   'src/renderer/renderer.js',
   'src/renderer/styles.css',
+  'assets/icon.ico',
+  'assets/logo-madiaznx-onr.png',
   'scripts/compare-ocr-engines.js',
   'scripts/prepare-release-assets.js'
 ];

@@ -25,6 +25,7 @@ function createWindow() {
     minWidth: 980,
     minHeight: 660,
     title: 'MadiaznX ONR',
+    icon: path.join(__dirname, '..', 'assets', 'icon.ico'),
     backgroundColor: '#f4f1eb',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
