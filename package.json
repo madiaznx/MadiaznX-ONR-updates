@@ -1,6 +1,6 @@
 {
   "name": "madiaznx-onr",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "Aplicativo Electron para preparar e enviar poligonos ao Mapa ONR.",
   "main": "src/main.js",
   "private": true,

@@ -4,7 +4,7 @@ const { autoUpdater } = require('electron-updater');
 const { createConfigStore } = require('./services/config-store');
 const { analyzeMatricula } = require('./services/matricula-reader');
 const { loadKmlFile, matchPolygonForMatricula } = require('./services/kml-service');
-const { createRecord, emptyRecord, applyPolygon, validateRecord, PUBLICITY_LEVELS, POLYGON_CLASSIFICATIONS, POLYGON_CATEGORIES, LEGAL_RELATIONS, PROPERTY_TYPES, PROPERTY_KIND, POLYGON_FORMATS } = require('./services/onr-fields');
+const { createRecord, emptyRecord, applyPolygon, validateRecord, PUBLICITY_LEVELS, POLYGON_CLASSIFICATIONS, POLYGON_CATEGORIES, PROPERTY_TYPES, PROPERTY_KIND, POLYGON_FORMATS } = require('./services/onr-fields');
 const { prepareShapefile, sendToOnr, getImportStatus } = require('./services/onr-api');
 
 const UPDATE_REPO_URL = 'https://github.com/madiaznx/MadiaznX-ONR-updates';
@@ -123,7 +123,6 @@ ipcMain.handle('onr:get-options', () => ({
   publicityLevels: PUBLICITY_LEVELS,
   polygonClassifications: POLYGON_CLASSIFICATIONS,
   polygonCategories: POLYGON_CATEGORIES,
-  legalRelations: LEGAL_RELATIONS,
   propertyTypes: PROPERTY_TYPES,
   propertyKind: PROPERTY_KIND,
   polygonFormats: POLYGON_FORMATS

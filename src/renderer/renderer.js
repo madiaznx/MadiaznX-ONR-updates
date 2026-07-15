@@ -55,11 +55,7 @@ const fieldGroups = [
     title: 'Parte',
     fields: [
       field('nomeProprietario', 'Nome do proprietario', false, 'textarea'),
-      field('cpfCnpj', 'CPF/CNPJ', false, 'textarea'),
-      selectField('tipoRelacaoJuridica', 'Relacao juridica', 'legalRelations'),
-      field('percentual', 'Percentual'),
-      field('dataInicio', 'Data de inicio'),
-      field('dataFim', 'Data fim')
+      field('cpfCnpj', 'CPF/CNPJ', false, 'textarea')
     ]
   },
   {
