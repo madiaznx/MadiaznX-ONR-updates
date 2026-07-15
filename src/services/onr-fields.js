@@ -140,7 +140,7 @@ function createRecord({ matricula, ocrFields, polygon, settings }) {
   fields.cep = ocrFields.cep || '';
   fields.areaM2 = ocrFields.areaM2 || '';
   fields.areaHa = ocrFields.areaHa || '';
-  fields.tipo = inferKind(ocrFields);
+  fields.tipo = ocrFields.tipo || inferKind(ocrFields);
   fields.numeroImovel = ocrFields.numeroImovel || '';
   fields.tipoImovel = ocrFields.tipoImovel || fields.tipoImovel;
   fields.nomeImovel = ocrFields.nomeImovel || '';
@@ -225,6 +225,9 @@ function validateRecord(fields, polygon) {
 }
 
 function inferKind(ocrFields) {
+  if (ocrFields.tipo === 'URBANO' || ocrFields.tipo === 'RURAL') {
+    return ocrFields.tipo;
+  }
   if (ocrFields.car || ocrFields.ccirSncr || ocrFields.snci || ocrFields.sigef || ocrFields.cibNirf) {
     return 'RURAL';
   }

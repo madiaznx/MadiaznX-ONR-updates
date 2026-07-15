@@ -385,6 +385,7 @@ function extractFields(text, fallbackMatricula) {
   const propertyAddress = extractPropertyAddress(normalizedText, lines);
   const propertyProfile = extractPropertyProfile(normalizedText, lines);
   const cadastroRegistro = extractCadastroRegistro(normalizedText);
+  const tipo = extractPropertyKind(normalizedText);
   const areaM2 = firstMatch(normalizedText, /(?:area|[aá]rea)\D{0,18}([\d.]+,\d{2})\s*m/i);
   const areaHa = firstMatch(normalizedText, /(?:area|[aá]rea)\D{0,18}([\d.]+,\d{2,4})\s*ha/i);
 
@@ -396,6 +397,7 @@ function extractFields(text, fallbackMatricula) {
     cadastroRegistro,
     nomeProprietario: isSuspectOwnerName(ownerName) ? '' : ownerName,
     cpfCnpj: displayCpfCnpj,
+    tipo,
     endereco: propertyAddress.endereco,
     numeroImovel: propertyAddress.numeroImovel,
     tipoImovel: propertyProfile.tipoImovel,
@@ -623,6 +625,7 @@ function extractLatestOwnerFromActs(text) {
     /passa\s+a\s+deter\s+a\s+propriedade\s+plena[^.]{0,260}?credor[ao]\s+fiduci[aá]ri[ao]\s+(.+?)(?:,\s*(?:j[aá]\s+qualificad[ao]|CNPJ|CPF|RG)|\.|;)/gi,
     /usucapi[aã]o.{0,700}?requerid[ao]\s+por\s+(.+?)(?:,\s*(?:RG|CPF|CPF\/MF|CNPJ|brasileir[ao]|portador|inscrit[ao]|casad[ao]|solteir[ao])|\.|;)/gi,
     /(?:doou|doaram)\s+(?:ao|aos|[a\u00e0\u00e1])\s+(.+?)(?:,\s*(?:RG|CPF|CPF\/MF|CNPJ|CNPJ\/MF|brasileir[ao]|portador|inscrit[ao]|casad[ao]|solteir[ao]|com\s+sede)|\s+o\s+im[oó]vel|\.|;)/gi,
+    /(?:foi|foram|fica(?:m)?|ficou|restou)\s+partilhad[ao]s?\s+(?:a|ao|aos|as|para|em\s+favor\s+de)\s+(?:(?:herdeir[ao](?:-filh[ao])?|legat[a\u00e1]ri[ao]|meeir[ao])(?:\s+e\s+(?:herdeir[ao](?:-filh[ao])?|legat[a\u00e1]ri[ao]|meeir[ao]))?\s+)?(.+?)(?:,\s*(?:RG|CPF|CPF\/MF|CNPJ|CNPJ\/MF|brasileir[ao]|portador|inscrit[ao]|casad[ao]|solteir[ao])|\s+pelo\s+valor|\.|;)/gi,
     /(?:transmitiram|transmitiu|vendeu|venderam|doou|doaram|cedeu|cederam|alienou|alienaram).{0,520}?\s+[a\u00e0\u00e1]\s+(.+?)(?:,\s*(?:RG|CPF|CPF\/MF|CNPJ|CNPJ\/MF|brasileir[ao]|portador|inscrit[ao]|casad[ao]|solteir[ao])|\s+pelo\s+valor|\.|;)/gi,
     /(?:adquirente[s]?|comprador(?:es)?|donat[aá]ri[ao]s?|cession[aá]ri[ao]s?)\s*[:\-]?\s*(.+?)(?:,\s*(?:RG|CPF|CPF\/MF|CNPJ|brasileir[ao]|portador|inscrit[ao]|casad[ao]|solteir[ao])|\.|;|$)/gi,
     /(?:passa(?:m)?\s+a\s+pertencer|fica(?:m)?\s+pertencendo)\s+a\s+(.+?)(?:,\s*(?:RG|CPF|CPF\/MF|CNPJ|brasileir[ao]|portador|inscrit[ao]|casad[ao]|solteir[ao])|\.|;)/gi
@@ -1215,6 +1218,43 @@ function textForSearch(value) {
     .toLowerCase();
 }
 
+function extractPropertyKind(text) {
+  const value = String(text || '');
+  const search = textForSearch(value);
+  const candidates = [];
+  const patterns = [
+    { kind: 'URBANO', pattern: /\bpassou\s+a\s+pertencer\s+ao\s+perimetro\s+urbano\b/g, score: 90 },
+    { kind: 'URBANO', pattern: /\bfinalidade\s+urbana\b/g, score: 80 },
+    { kind: 'URBANO', pattern: /\balteracao\s+de\s+perimetro\s+e\s+cadastro\s+municipal\b/g, score: 70 },
+    { kind: 'URBANO', pattern: /\b(?:cadastro\s+municipal|inscricao\s+municipal|cadastrad[ao]\s+no\s+bc|bc\s+n[o.]?\s*\d)\b/g, score: 60 },
+    { kind: 'RURAL', pattern: /\bimovel\s+rural\b/g, score: 30 },
+    { kind: 'RURAL', pattern: /\b(?:cadastro\s+(?:no\s+)?incra|incra\s+n[o.]?|nirf|ccir|sncr|modulo\s+rural|modulo\s+fiscal|car)\b/g, score: 20 }
+  ];
+
+  for (const { kind, pattern, score } of patterns) {
+    for (const match of search.matchAll(pattern)) {
+      candidates.push({
+        kind,
+        index: match.index,
+        act: actNumberBefore(value, match.index, 1200),
+        score
+      });
+    }
+  }
+
+  candidates.sort((left, right) => {
+    if (left.act !== right.act) {
+      if (left.act == null) return 1;
+      if (right.act == null) return -1;
+      return right.act - left.act;
+    }
+    if (left.score !== right.score) return right.score - left.score;
+    return right.index - left.index;
+  });
+
+  return candidates.length ? candidates[0].kind : '';
+}
+
 function extractCadastroRegistro(text) {
   const candidates = [];
   const value = String(text || '');
@@ -1237,7 +1277,7 @@ function extractCadastroRegistro(text) {
     },
     {
       pattern: /\bB\.?\s*C\.?\s*(?:n[\u00ba\u00b0o?.]?|n[uú]mero|numero|n\.)\s*([A-Z0-9][A-Z0-9.\-\/]{1,})/gi,
-      score: 10
+      score: 55
     },
     {
       pattern: /\b(?:cadastro\s+(?:no\s+)?INCRA|INCRA)[^.;]{0,160}?(?:sob\s+)?(?:n[\u00ba\u00b0o?.]?|n[uú]mero|numero|n\.)\s*([A-Z0-9][A-Z0-9.\-\/]{2,})/gi,
@@ -1252,7 +1292,7 @@ function extractCadastroRegistro(text) {
       candidates.push({
         value: cadastro,
         index: match.index,
-        act: actNumberBefore(value, match.index),
+        act: actNumberBefore(value, match.index, 1200),
         score
       });
     }
@@ -1285,11 +1325,11 @@ function cleanCadastroRegistroValue(value) {
 
   if (!/\d/.test(clean)) return '';
   if (/^(?:BC|INCRA|SOB|NUMERO|N)$/i.test(clean)) return '';
-  return clean;
+  return onlyDigits(clean);
 }
 
-function actNumberBefore(text, index) {
-  const before = textForSearch(String(text || '').slice(Math.max(0, index - 700), index));
+function actNumberBefore(text, index, distance = 700) {
+  const before = textForSearch(String(text || '').slice(Math.max(0, index - distance), index));
   const matches = [...before.matchAll(/\b(?:av|r)\.?\s*[-:]?\s*(\d{1,4})\b/g)];
   if (!matches.length) return null;
   return Number.parseInt(matches[matches.length - 1][1], 10);
