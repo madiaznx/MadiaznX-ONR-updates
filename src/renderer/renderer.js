@@ -75,17 +75,6 @@ const fieldGroups = [
       field('cif', 'CIF'),
       field('itbi', 'Valor do ITBI')
     ]
-  },
-  {
-    title: 'Confrontantes e medidas',
-    fields: [
-      field('confrontantesMatriculas', 'Confrontantes (matriculas)', false, 'textarea'),
-      field('nomeConfrontantes', 'Nome dos confrontantes', false, 'textarea'),
-      field('areaHa', 'Area ha'),
-      field('areaM2', 'Area m2'),
-      field('perimetroM', 'Perimetro m'),
-      field('perimetroKm', 'Perimetro km')
-    ]
   }
 ];
 

@@ -142,6 +142,8 @@ function createRecord({ matricula, ocrFields, polygon, settings }) {
   fields.areaHa = ocrFields.areaHa || '';
   fields.tipo = inferKind(ocrFields);
   fields.numeroImovel = ocrFields.numeroImovel || '';
+  fields.tipoImovel = ocrFields.tipoImovel || fields.tipoImovel;
+  fields.nomeImovel = ocrFields.nomeImovel || '';
 
   if (polygon) {
     applyPolygon(fields, polygon);
@@ -208,7 +210,6 @@ function applyPolygon(fields, polygon) {
   fields.areaHa = fields.areaHa || formatNumber(polygon.areaHa, 4);
   fields.perimetroM = formatNumber(polygon.perimeterM, 2);
   fields.perimetroKm = formatNumber(polygon.perimeterKm, 4);
-  fields.nomeImovel = fields.nomeImovel || polygon.name || '';
   return fields;
 }
 
@@ -244,6 +245,7 @@ function toApiPayload(fields, fileNames) {
 function toDbfRow(fields) {
   return {
     MATRICULA: fields.matricula,
+    CADASTRO: fields.cadastroRegistro,
     DAT_MAT: fields.dataMatricula,
     LIV_MAT: fields.livroMatricula,
     FOL_MAT: fields.folhaMatricula,
@@ -257,17 +259,11 @@ function toDbfRow(fields) {
     UF: fields.uf,
     NOME_PROP: fields.nomeProprietario,
     CPF_CNPJ: fields.cpfCnpj,
-    CONF_MAT: fields.confrontantesMatriculas,
-    CONF_NOM: fields.nomeConfrontantes,
     REL_JUR: fields.tipoRelacaoJuridica,
     DAT_INI: fields.dataInicio,
     DAT_FIM: fields.dataFim,
     PER_REL: parseNumber(fields.percentual),
     NOME_IMO: fields.nomeImovel,
-    AREA_HA: parseNumber(fields.areaHa),
-    AREA_M2: parseNumber(fields.areaM2),
-    PERIM_M: parseNumber(fields.perimetroM),
-    PERIM_KM: parseNumber(fields.perimetroKm),
     CCIR_SNCR: fields.ccirSncr,
     SIGEF: fields.sigef,
     SNCI: fields.snci,

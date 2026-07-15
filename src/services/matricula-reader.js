@@ -383,6 +383,7 @@ function extractFields(text, fallbackMatricula) {
     || nearbyOwnerDocument
     || (ownerLooksLegal ? legalEntityCnpj : '');
   const propertyAddress = extractPropertyAddress(normalizedText, lines);
+  const propertyProfile = extractPropertyProfile(normalizedText, lines);
   const cadastroRegistro = extractCadastroRegistro(normalizedText);
   const areaM2 = firstMatch(normalizedText, /(?:area|[aá]rea)\D{0,18}([\d.]+,\d{2})\s*m/i);
   const areaHa = firstMatch(normalizedText, /(?:area|[aá]rea)\D{0,18}([\d.]+,\d{2,4})\s*ha/i);
@@ -397,6 +398,8 @@ function extractFields(text, fallbackMatricula) {
     cpfCnpj: displayCpfCnpj,
     endereco: propertyAddress.endereco,
     numeroImovel: propertyAddress.numeroImovel,
+    tipoImovel: propertyProfile.tipoImovel,
+    nomeImovel: propertyProfile.nomeImovel,
     cep: propertyAddress.cep || cep,
     ccirSncr: ccir,
     snci,
@@ -705,6 +708,139 @@ function cleanOwnerDocumentForDisplay(value, ownerLooksLegal) {
   if (ownerLooksLegal && !isCnpjDocument(doc)) return '';
   if (!ownerLooksLegal && isCnpjDocument(doc)) return '';
   return doc;
+}
+
+function extractPropertyProfile(text, lines) {
+  const openingDescription = extractOpeningPropertyDescription(text);
+  const addressContexts = [
+    ...collectPropertyAddressContexts(text, lines),
+    ...collectPropertyAddressFallbackContexts(text, lines)
+  ];
+  const propertyContext = [openingDescription, ...addressContexts].filter(Boolean).join(' ');
+
+  return {
+    tipoImovel: inferPropertyType(propertyContext, text),
+    nomeImovel: extractPropertyName(text, openingDescription)
+  };
+}
+
+function inferPropertyType(propertyContext, fullText) {
+  const context = textForSearch(propertyContext);
+  const allText = textForSearch(fullText);
+
+  if (/\b(?:apartamento|apto)\b/.test(context)) return 'Apto';
+  if (/\b(?:sala|conjunto)\b/.test(context)) return 'Sala/Conjunto';
+  if (/\bloja\b/.test(context)) return 'Loja';
+  if (/\bgalpao\b/.test(context)) return 'Galpao';
+  if (/\b(?:fazenda|sitio|chacara)\b/.test(context)) return 'Fazenda/Sitio/Chacara';
+  if (/\bpredio\s+comercial\b/.test(context)) return 'Predio Comercial';
+  if (/\bpredio\s+residencial\b/.test(context)) return 'Predio Residencial';
+  if (hasConstructionNumberAct(allText)) return 'Predio Residencial';
+  if (/\b(?:casa|residencia)\b/.test(context)) return 'Casa';
+  return 'Terreno/fracao';
+}
+
+function hasConstructionNumberAct(searchText) {
+  const value = String(searchText || '');
+  const constructionPatterns = [
+    /\b(?:av|averbacao)\b.{0,140}\bconstrucao\b.{0,260}\b(?:recebeu|numero\s+predial|numeracao\s+predial|sob\s+n[o.]?|n[o.]?)\b/i,
+    /\bconstrucao\b.{0,260}\b(?:recebeu|numero\s+predial|numeracao\s+predial|sob\s+n[o.]?|n[o.]?)\b/i,
+    /\b(?:recebeu|passou\s+a\s+ter)\b.{0,120}\b(?:numero\s+predial|n[o.]?)\b.{0,180}\bconstrucao\b/i
+  ];
+  return constructionPatterns.some((pattern) => pattern.test(value));
+}
+
+function extractPropertyName(text, openingDescription) {
+  const value = String(text || '');
+  const contexts = [
+    String(openingDescription || ''),
+    ...collectDenominationContexts(value)
+  ].filter(Boolean);
+  const candidates = [];
+
+  for (const context of contexts) {
+    if (isLotOrStreetDenomination(context)) continue;
+    const patterns = [
+      /\b(?:im[oó]vel|terreno|[aá]rea|gleba|ch[aá]cara|s[ií]tio|fazenda|propriedade|pr[eé]dio|casa)\b[^.;\n]{0,140}?\bdenominad[ao]\s+["“”']?([^".;,\n]{3,100})/gi,
+      /\bpassou\s+a\s+denominar-se\s+["“”']?([^".;,\n]{3,100})/gi,
+      /\bdenomina[cç][aã]o\b(?!\s+de\s+logradouro)[^.;\n]{0,220}?\b(?:denominad[ao]|denominar-se)\s+["“”']?([^".;,\n]{3,100})/gi
+    ];
+
+    for (const pattern of patterns) {
+      for (const match of context.matchAll(pattern)) {
+        const name = cleanPropertyName(match[1]);
+        if (!name || isSuspectPropertyName(name, context)) continue;
+        candidates.push({
+          name,
+          act: actNumberBefore(value, value.indexOf(context)),
+          index: value.indexOf(context)
+        });
+      }
+    }
+  }
+
+  candidates.sort((left, right) => {
+    if (left.act !== right.act) {
+      if (left.act == null) return 1;
+      if (right.act == null) return -1;
+      return right.act - left.act;
+    }
+    return right.index - left.index;
+  });
+
+  return candidates.length ? candidates[0].name : '';
+}
+
+function collectDenominationContexts(text) {
+  const contexts = [];
+  const patterns = [
+    /(?:averba[cç][aã]o|av\.)[^.]{0,120}\bdenomina[cç][aã]o\b[^.]{0,420}/gi,
+    /\b(?:im[oó]vel|terreno|[aá]rea|gleba|ch[aá]cara|s[ií]tio|fazenda|propriedade|pr[eé]dio|casa)\b[^.]{0,260}\bdenominad[ao]\b[^.]{0,260}/gi,
+    /\bpassou\s+a\s+denominar-se\b[^.]{0,260}/gi
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of String(text || '').matchAll(pattern)) {
+      const context = sentenceAround(text, match.index).replace(/\s+/g, ' ').trim();
+      if (context && !contexts.includes(context)) contexts.push(context);
+    }
+  }
+
+  return contexts;
+}
+
+function extractOpeningPropertyDescription(text) {
+  const value = String(text || '').replace(/\s+/g, ' ');
+  const match = value.match(/\bim[oó]vel\s*[:\-]\s*(.+?)(?=\b(?:registro\s+anterior|contribuinte|r\.?\s*0?1|av\.?\s*0?1|selo\s+digital|oficial)\b|$)/i);
+  return match ? match[1].trim() : '';
+}
+
+function isLotOrStreetDenomination(value) {
+  const search = textForSearch(value);
+  return /denominacao\s+de\s+logradouro|logradouro|rua|avenida|travessa|alameda|praca/.test(search)
+    || /\bloteamento\b.{0,100}\bdenominad/.test(search)
+    || /\bdenominad[ao]\b.{0,100}\bloteamento\b/.test(search)
+    || /\b(?:do|no|integrante\s+do)\s+loteamento\b/.test(search);
+}
+
+function cleanPropertyName(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .replace(/^(?:de|do|da|o|a)\s+/i, '')
+    .replace(/\s+(?:situad[ao]|localizad[ao]|com\s+frente|objeto|matr[ií]cula|cadastro|confrontando|medindo|com\s+[aá]rea)\b.*$/i, '')
+    .replace(/["“”'.,;:]$/g, '')
+    .trim();
+}
+
+function isSuspectPropertyName(name, context) {
+  const value = textForSearch(name);
+  const contextSearch = textForSearch(context);
+  if (!value || value.length < 3 || value.length > 100) return true;
+  if (/^(?:rua|avenida|travessa|alameda|praca|loteamento|bairro|quadra|lote)\b/.test(value)) return true;
+  if (/^(?:um|uma|o|a|imovel|terreno|area|gleba|predio|casa)$/.test(value)) return true;
+  if (/denominacao\s+de\s+logradouro|logradouro/.test(contextSearch)) return true;
+  if (/\bloteamento\b/.test(contextSearch) && !/\b(?:imovel|propriedade|fazenda|sitio|chacara|gleba)\b/.test(contextSearch)) return true;
+  return false;
 }
 
 function extractPropertyAddress(text, lines) {
